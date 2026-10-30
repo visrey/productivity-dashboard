@@ -1,0 +1,912 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Win32 Hardware Activity Simulator — Interactive Explainer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #020617;
+            color: #f8fafc;
+        }
+        .mono {
+            font-family: 'JetBrains Mono', monospace;
+        }
+        @keyframes pulseRing {
+            0% { transform: scale(0.5); opacity: 1; }
+            100% { transform: scale(2.4); opacity: 0; }
+        }
+        .click-ripple {
+            animation: pulseRing 0.55s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 9999px;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col p-4 md:p-6 gap-5 select-none">
+
+    <!-- Top Navigation & Control Header -->
+    <header class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-xl flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
+        <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/40 flex items-center justify-center text-indigo-400 font-bold text-lg shadow-inner">
+                ⚡
+            </div>
+            <div>
+                <div class="flex items-center gap-2.5">
+                    <h1 class="text-base md:text-lg font-bold tracking-tight text-white">Win32 Hardware Activity Simulator</h1>
+                    <span id="phaseBadgeHeader" class="px-2.5 py-0.5 text-[11px] font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 mono">
+                        🟢 ACTIVE PHASE (5m)
+                    </span>
+                </div>
+                <p class="text-xs text-slate-400 mt-0.5">
+                    Visualizing how <span class="mono text-indigo-300">SendInput</span>, hardware scancodes, and micro-steps bypass idle detection
+                </p>
+            </div>
+        </div>
+
+        <!-- Interactive Controls -->
+        <div class="flex flex-wrap items-center gap-2 w-full lg:w-auto justify-start lg:justify-end">
+            <button id="btnSwitchView" onclick="toggleDashboardView()" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow-lg shadow-emerald-900/30">
+                <span>📊</span> <span id="viewToggleText">Open Productivity Dashboard</span>
+            </button>
+            <button id="btnPlayPause" class="px-3.5 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold flex items-center gap-1.5 transition shadow">
+                <span id="playIcon">⏸</span> <span id="playText">Pause Auto-Loop</span>
+            </button>
+            <button id="btnTogglePhase" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-medium transition">
+                Switch Active / Idle
+            </button>
+            <div class="h-5 w-[1px] bg-slate-800 hidden sm:block mx-1"></div>
+            <div class="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button onclick="triggerSpecificAction(0)" class="px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-[11px] font-medium text-emerald-300 transition" title="Action 0: Glide + Click + Scroll">
+                    0: Glide+Click
+                </button>
+                <button onclick="triggerSpecificAction(1)" class="px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-[11px] font-medium text-indigo-300 transition" title="Action 1: Alt+Tab 15s">
+                    1: Alt+Tab
+                </button>
+                <button onclick="triggerSpecificAction(2)" class="px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-[11px] font-medium text-amber-300 transition" title="Action 2: Type Snippet & Backspace">
+                    2: Type Code
+                </button>
+                <button onclick="triggerSpecificAction(3)" class="px-2.5 py-1.5 rounded-lg hover:bg-slate-800 text-[11px] font-medium text-cyan-300 transition" title="Action 3: Read & Scroll">
+                    3: Scroll Read
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- 8-Minute Master Cycle Timeline Bar -->
+    <section class="bg-slate-900/80 border border-slate-800 rounded-2xl p-4 shadow-lg">
+        <div class="flex flex-wrap items-center justify-between text-xs mb-2 gap-2">
+            <div class="flex items-center gap-2">
+                <span class="font-semibold text-slate-200">Master 8-Minute Activity Cycle:</span>
+                <span class="text-emerald-400 font-medium">5 Min Active Phase</span>
+                <span class="text-slate-600">→</span>
+                <span class="text-rose-400 font-medium">3 Min Idle Phase</span>
+            </div>
+            <div class="flex items-center gap-4 mono text-[11px]">
+                <span class="text-slate-400">Cycle Clock: <strong id="cycleTimeLabel" class="text-white">01:12 / 08:00</strong></span>
+                <span class="text-slate-400">Next Random Action: <strong id="nextActionCountdown" class="text-indigo-400">8s</strong></span>
+            </div>
+        </div>
+        <div class="relative w-full h-3.5 bg-slate-950 rounded-full overflow-hidden border border-slate-800 flex">
+            <!-- 5 min active = 62.5% -->
+            <div class="w-[62.5%] h-full bg-gradient-to-r from-emerald-600/40 via-emerald-500/40 to-emerald-400/40 border-r border-slate-700 flex items-center justify-center text-[9px] font-bold text-emerald-200 tracking-wider uppercase">
+                Active Phase (5 Mins — Random Actions Every 8–22s)
+            </div>
+            <!-- 3 min idle = 37.5% -->
+            <div class="w-[37.5%] h-full bg-gradient-to-r from-rose-900/40 to-rose-600/30 flex items-center justify-center text-[9px] font-bold text-rose-200 tracking-wider uppercase">
+                Idle Break (3 Mins — Natural Pause)
+            </div>
+            <!-- Playhead -->
+            <div id="timelinePlayhead" class="absolute top-0 bottom-0 w-1 bg-white shadow-[0_0_10px_#fff] transition-all duration-150" style="left: 15%;"></div>
+        </div>
+    </section>
+
+    <!-- Productivity & Session Telemetry Dashboard View (Toggled via Header Button) -->
+    <section id="productivityDashboardView" class="hidden flex-col gap-5 flex-1">
+        <!-- Top KPI Row -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between text-xs text-slate-400">
+                    <span>Productivity Score</span>
+                    <span class="px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-semibold">Optimal Rhythm</span>
+                </div>
+                <div id="dashScore" class="text-3xl font-bold text-white mt-2 mono">94.2%</div>
+                <div class="w-full h-1.5 bg-slate-800 rounded-full mt-3 overflow-hidden">
+                    <div class="h-full bg-emerald-500 rounded-full" style="width: 94%"></div>
+                </div>
+                <p class="text-[11px] text-slate-400 mt-2">Balanced 5m active / 3m rest cadence</p>
+            </div>
+
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between text-xs text-slate-400">
+                    <span>Accounted Active Time</span>
+                    <span class="text-indigo-400 mono">http://localhost:8080</span>
+                </div>
+                <div id="dashActiveTime" class="text-3xl font-bold text-white mt-2 mono">02h 45m</div>
+                <div class="flex items-center gap-3 mt-3 text-xs">
+                    <span class="text-emerald-400 font-medium">● Active: <span id="dashActiveCycles">22</span> cycles</span>
+                    <span class="text-slate-400">● Breaks: <span id="dashBreakCycles">21</span></span>
+                </div>
+            </div>
+
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between text-xs text-slate-400">
+                    <span>Hardware Input Velocity</span>
+                    <span class="text-amber-400 mono">Win32 Queue</span>
+                </div>
+                <div id="dashTotalInputs" class="text-3xl font-bold text-white mt-2 mono">1,284</div>
+                <div class="grid grid-cols-3 gap-1 mt-3 text-[11px] text-slate-400 mono">
+                    <div>Moves: <span id="dashMoves" class="text-emerald-400">0</span></div>
+                    <div>Clicks: <span id="dashClicks" class="text-amber-400">0</span></div>
+                    <div>Keys: <span id="dashKeys" class="text-cyan-400">0</span></div>
+                </div>
+            </div>
+
+            <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 shadow-lg">
+                <div class="flex items-center justify-between text-xs text-slate-400">
+                    <span>Current Action Status</span>
+                    <span id="dashPhasePill" class="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold mono">ACTIVE</span>
+                </div>
+                <div id="dashCurrentTask" class="text-sm font-semibold text-indigo-300 mt-2 mono truncate">Code Review &amp; Typing</div>
+                <p class="text-xs text-slate-400 mt-2">Next random event in: <span id="dashNextCountdown" class="text-white font-semibold mono">8s</span></p>
+                <p class="text-[10px] text-slate-500 mt-1">Served live by Go embedded HTTP server</p>
+            </div>
+        </div>
+
+        <!-- Bottom Breakdown & Live Activity Audit Log -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
+            <!-- Action Distribution Bars -->
+            <div class="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
+                <div>
+                    <h3 class="text-sm font-bold text-white flex items-center justify-between">
+                        <span>Action Channel Distribution</span>
+                        <span class="text-xs font-normal text-slate-400 mono">4-Channel Mix</span>
+                    </h3>
+                    <p class="text-xs text-slate-400 mt-1">Prevents pattern-detection anomalies by blending cursor glides, clicks, scrolls, and scancodes.</p>
+
+                    <div class="space-y-4 mt-5">
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">0. Mouse Glide + Left Click + Scroll</span>
+                                <span id="distBar0Text" class="mono text-emerald-400">29%</span>
+                            </div>
+                            <div class="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                                <div id="distBar0" class="h-full bg-emerald-500 transition-all duration-300" style="width: 29%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">1. Alt+Tab Window Switch (15s)</span>
+                                <span id="distBar1Text" class="mono text-indigo-400">21%</span>
+                            </div>
+                            <div class="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                                <div id="distBar1" class="h-full bg-indigo-500 transition-all duration-300" style="width: 21%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">2. Code Snippet Typing &amp; Cleanup</span>
+                                <span id="distBar2Text" class="mono text-amber-400">25%</span>
+                            </div>
+                            <div class="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                                <div id="distBar2" class="h-full bg-amber-500 transition-all duration-300" style="width: 25%"></div>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="flex justify-between text-xs mb-1">
+                                <span class="text-slate-300 font-medium">3. Document Reading Scroll Simulation</span>
+                                <span id="distBar3Text" class="mono text-cyan-400">25%</span>
+                            </div>
+                            <div class="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                                <div id="distBar3" class="h-full bg-cyan-500 transition-all duration-300" style="width: 25%"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-6 p-3 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-400 flex items-center justify-between">
+                    <span>💡 <strong class="text-slate-200">Pro Tip:</strong> Keep <code class="mono text-emerald-400">localhost:8080</code> open as your 2nd window so <code class="mono">Alt+Tab</code> switches to this live dashboard!</span>
+                </div>
+            </div>
+
+            <!-- Live Productivity Session Feed -->
+            <div class="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 flex flex-col shadow-xl">
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3 mb-3">
+                    <div>
+                        <h3 class="text-sm font-bold text-white">Live Productivity Telemetry Stream</h3>
+                        <p class="text-xs text-slate-400">Real-time feed served by <code class="mono text-indigo-400">main.go</code> on port <code class="mono text-indigo-400">:8080/api/stats</code></p>
+                    </div>
+                    <span class="text-[11px] mono px-2.5 py-1 rounded-lg bg-slate-950 border border-slate-800 text-emerald-400">● 200 OK (1s poll)</span>
+                </div>
+                <div id="dashboardLogFeed" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-3 mono text-xs space-y-2 overflow-y-auto max-h-64">
+                    <!-- Populated dynamically -->
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main 3-Column Architecture Animation Grid -->
+    <main id="architectureMainGrid" class="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
+
+        <!-- COLUMN 1: Go State Machine & Syscall Engine (4 cols) -->
+        <div class="lg:col-span-4 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between gap-4 shadow-xl">
+            <div>
+                <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                    <div>
+                        <h2 class="text-sm font-bold text-white flex items-center gap-2">
+                            <span class="w-2 h-2 rounded-full bg-indigo-400"></span>
+                            1. Go Runtime Engine (<span class="mono text-xs text-indigo-300">main.go</span>)
+                        </h2>
+                        <p class="text-[11px] text-slate-400">Selects 1 of 4 human actions &amp; builds 40-byte structs</p>
+                    </div>
+                    <span class="mono text-[10px] px-2 py-1 rounded bg-slate-800 text-slate-300">rand.Intn(4)</span>
+                </div>
+
+                <!-- Power State Indicator -->
+                <div class="mt-3 p-3 rounded-xl bg-slate-950 border border-slate-800/80 flex items-center justify-between">
+                    <div class="text-xs">
+                        <div class="text-slate-400 font-medium">kernel32.SetThreadExecutionState</div>
+                        <div id="execFlagText" class="mono text-[11px] text-emerald-400 mt-0.5">ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED</div>
+                    </div>
+                    <div id="execStateIcon" class="px-2 py-1 rounded bg-emerald-500/10 text-emerald-300 text-[10px] font-bold mono">
+                        LOCK BLOCKED
+                    </div>
+                </div>
+
+                <!-- 4 Action Cards -->
+                <div class="mt-3 space-y-2.5">
+                    <div id="actionCard0" class="p-3 rounded-xl border border-slate-800 bg-slate-950/60 transition-all duration-200">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-emerald-300 mono">case 0: Glide + Click + Scroll</span>
+                            <span class="text-[10px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">MOUSEINPUT</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">
+                            20–35 relative micro-steps inside ±45px box → Left Click → Wheel Scroll Down/Up → F15 scancode.
+                        </p>
+                    </div>
+
+                    <div id="actionCard1" class="p-3 rounded-xl border border-slate-800 bg-slate-950/60 transition-all duration-200">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-indigo-300 mono">case 1: Alt+Tab Window Switch</span>
+                            <span class="text-[10px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">15s Cycle</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">
+                            Holds <span class="mono">VK_MENU + VK_TAB</span> → waits 7s → glides &amp; scrolls in 2nd window → waits 8s → switches back.
+                        </p>
+                    </div>
+
+                    <div id="actionCard2" class="p-3 rounded-xl border border-slate-800 bg-slate-950/60 transition-all duration-200">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-amber-300 mono">case 2: Type Snippet &amp; Cleanup</span>
+                            <span class="text-[10px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">KEYEVENTF_UNICODE</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">
+                            Clicks focus → taps <span class="mono">VK_RIGHT</span> (protects selected code!) → types snippet → pauses 5–12s → <span class="mono">VK_BACK</span> exact rune count.
+                        </p>
+                    </div>
+
+                    <div id="actionCard3" class="p-3 rounded-xl border border-slate-800 bg-slate-950/60 transition-all duration-200">
+                        <div class="flex items-center justify-between">
+                            <span class="text-xs font-bold text-cyan-300 mono">case 3: Document Reading</span>
+                            <span class="text-[10px] mono px-1.5 py-0.5 rounded bg-slate-800 text-slate-400">MOUSEEVENTF_WHEEL</span>
+                        </div>
+                        <p class="text-[11px] text-slate-400 mt-1">
+                            Smooth cursor glide → scrolls down 2 notches (<span class="mono">-240</span>) → reads 1.5s → scrolls back up (<span class="mono">+240</span>).
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Why SetCursorPos Fails Callout -->
+            <div class="p-3 rounded-xl bg-indigo-950/30 border border-indigo-500/30 text-[11px] text-indigo-200">
+                <strong class="text-indigo-300">Why this works:</strong> Standard bots use <span class="mono">SetCursorPos(x,y)</span> which teleports the pointer without firing hardware interrupts. This program injects raw <span class="mono">MOUSEEVENTF_MOVE</span> vectors into <span class="mono">user32!SendInput</span>.
+            </div>
+        </div>
+
+        <!-- COLUMN 2: Live Simulated Desktop & Safe Bounding Box (5 cols) -->
+        <div class="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between gap-3 shadow-xl">
+            <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div>
+                    <h2 class="text-sm font-bold text-white flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        2. Simulated Desktop Window
+                    </h2>
+                    <p class="text-[11px] text-slate-400">Mouse stays inside the ±45px green bounding box in your active editor</p>
+                </div>
+                <span id="activeWindowBadge" class="mono text-[11px] px-2.5 py-1 rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 font-semibold">
+                    Window: VS Code
+                </span>
+            </div>
+
+            <!-- Simulated Monitor Screen -->
+            <div class="relative w-full h-80 bg-slate-950 rounded-xl border border-slate-800 overflow-hidden shadow-inner flex flex-col">
+                
+                <!-- Fake Window Titlebar -->
+                <div id="simWindowHeader" class="h-7 bg-slate-900 border-b border-slate-800 px-3 flex items-center justify-between text-[11px] mono text-slate-400 transition-colors duration-300">
+                    <div class="flex items-center gap-1.5">
+                        <span class="w-2.5 h-2.5 rounded-full bg-rose-500/70"></span>
+                        <span class="w-2.5 h-2.5 rounded-full bg-amber-500/70"></span>
+                        <span class="w-2.5 h-2.5 rounded-full bg-emerald-500/70"></span>
+                        <span id="windowTitleText" class="ml-2 text-slate-200 font-medium">Visual Studio Code — service_handler.go</span>
+                    </div>
+                    <span id="scrollStatusBadge" class="text-[10px] text-slate-500">Scroll Y: 0px</span>
+                </div>
+
+                <!-- Code Editor Body -->
+                <div id="editorContentArea" class="p-3.5 mono text-xs space-y-1.5 flex-1 transition-transform duration-300 overflow-hidden relative">
+                    <div class="text-slate-600">01 &nbsp;<span class="text-pink-400">package</span>生產</div>
+                    <div class="text-slate-600">02</div>
+                    <div class="text-slate-600">03 &nbsp;<span class="text-sky-400">func</span> <span class="text-emerald-300">ProcessOrderQueue</span>(ctx Context) <span class="text-sky-400">error</span> {</div>
+                    <div class="text-slate-600">04 &nbsp;&nbsp;&nbsp;&nbsp; existingCode := <span class="text-amber-300">"Safe &amp; Untouched"</span></div>
+                    <div class="text-slate-600 flex items-center flex-wrap">
+                        <span>05 &nbsp;&nbsp;&nbsp;&nbsp; </span>
+                        <!-- Protected selection demo -->
+                        <span id="existingCodeToken" class="px-1 rounded text-slate-200 transition-colors">if err := validate(ctx); err != nil</span>
+                    </div>
+                    <!-- Dynamic Typing Line -->
+                    <div class="text-slate-600 flex items-center min-h-[20px]">
+                        <span>06 &nbsp;&nbsp;&nbsp;&nbsp; </span>
+                        <span id="typedSnippetText" class="text-emerald-400 font-medium"></span>
+                        <span class="w-1.5 h-4 bg-indigo-400 inline-block ml-0.5 animate-pulse"></span>
+                    </div>
+                    <div class="text-slate-600">07 &nbsp;&nbsp;&nbsp;&nbsp; <span class="text-pink-400">return</span> nil</div>
+                    <div class="text-slate-600">08 &nbsp;}</div>
+
+                    <!-- Secondary Window Overlay (Shown during Alt+Tab Action 1) -->
+                    <div id="altTabOverlay" class="hidden absolute inset-0 bg-slate-900/95 backdrop-blur-sm p-4 flex-col justify-between border-t border-indigo-500/30">
+                        <div class="flex items-center justify-between">
+                            <span class="px-2.5 py-1 rounded bg-cyan-500/20 text-cyan-300 text-xs font-bold">
+                                🌐 Switched via Alt+Tab: Chrome Documentation
+                            </span>
+                            <span id="altTabTimer" class="mono text-xs text-amber-300 font-bold">Holding: 15s</span>
+                        </div>
+                        <div class="my-auto space-y-2 text-slate-300 text-xs">
+                            <div class="h-3 w-3/4 bg-slate-800 rounded"></div>
+                            <div class="h-3 w-1/2 bg-slate-800 rounded"></div>
+                            <div class="h-3 w-5/6 bg-slate-800 rounded"></div>
+                            <p class="text-[11px] text-indigo-300 pt-2">
+                                Performing micro-glide + wheel scroll inside secondary window so time-tracker registers active multi-window usage...
+                            </p>
+                        </div>
+                        <div class="text-[10px] text-slate-500">Will press Alt+Tab again to return to VS Code</div>
+                    </div>
+                </div>
+
+                <!-- +/- 45px Constrained Safe Bounding Box Overlay -->
+                <div id="safeBox" class="absolute w-32 h-32 border-2 border-dashed border-emerald-500/50 bg-emerald-500/5 rounded-xl pointer-events-none flex items-end justify-center pb-1" style="left: 52%; top: 38%;">
+                    <span class="text-[9px] mono text-emerald-300/80 bg-slate-950/80 px-1.5 rounded">±45px Safe Box</span>
+                </div>
+
+                <!-- Trail Canvas for Micro-Steps -->
+                <canvas id="mouseTrailCanvas" class="absolute inset-0 w-full h-full pointer-events-none"></canvas>
+
+                <!-- Animated Hardware Cursor -->
+                <div id="simCursor" class="absolute pointer-events-none transition-none z-30" style="left: 62%; top: 52%;">
+                    <div id="clickRippleRing" class="hidden w-7 h-7 -ml-3 -mt-3 rounded-full border-2 border-amber-400 absolute"></div>
+                    <!-- Cursor SVG -->
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" class="drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">
+                        <path d="M4 2L20 11L13 13L16 21L13 22L10 14L4 19V2Z" fill="#10b981" stroke="#ffffff" stroke-width="1.8"/>
+                    </svg>
+                    <span id="cursorCoordTag" class="ml-3 -mt-2 block px-1.5 py-0.5 rounded bg-slate-900/90 border border-slate-700 text-[9px] mono text-emerald-300 whitespace-nowrap">
+                        dx:+0 dy:+0
+                    </span>
+                </div>
+            </div>
+
+            <!-- Live Status Narration Banner -->
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs">
+                <div class="flex items-center gap-2">
+                    <span class="text-indigo-400 font-bold mono">STATUS:</span>
+                    <span id="liveNarration" class="text-slate-200 font-medium">Gliding mouse in 28 relative micro-steps...</span>
+                </div>
+                <span id="stepCounterBadge" class="mono text-[11px] text-slate-400">Step 0/0</span>
+            </div>
+        </div>
+
+        <!-- COLUMN 3: Win32 SendInput Stream & Tracker Telemetry (3 cols) -->
+        <div class="lg:col-span-3 bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex flex-col justify-between gap-4 shadow-xl">
+            <div>
+                <div class="border-b border-slate-800 pb-3">
+                    <h2 class="text-sm font-bold text-white flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-amber-400"></span>
+                        3. OS &amp; Tracker Telemetry
+                    </h2>
+                    <p class="text-[11px] text-slate-400">How monitoring software sees your session</p>
+                </div>
+
+                <!-- Windows GetLastInputInfo() Timer -->
+                <div class="mt-3 p-3 rounded-xl bg-slate-950 border border-slate-800">
+                    <div class="flex items-center justify-between text-xs">
+                        <span class="text-slate-400 mono">GetLastInputInfo()</span>
+                        <span id="idleResetTag" class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold">
+                            ACTIVE ACCOUNTED
+                        </span>
+                    </div>
+                    <div class="flex items-baseline justify-between mt-2">
+                        <div class="text-2xl font-bold mono text-white" id="osIdleTimerText">0.2s</div>
+                        <div class="text-[11px] text-slate-400">Lock threshold: <span class="text-slate-300">300s</span></div>
+                    </div>
+                    <div class="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden mt-2">
+                        <div id="osIdleBar" class="h-full bg-emerald-500 transition-all duration-200" style="width: 4%;"></div>
+                    </div>
+                </div>
+
+                <!-- 3-Channel Activity Scorecards -->
+                <div class="grid grid-cols-3 gap-2 mt-3">
+                    <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-center">
+                        <div class="text-[10px] text-slate-400">Mouse Steps</div>
+                        <div id="metricMoves" class="text-base font-bold text-emerald-400 mono mt-0.5">0</div>
+                    </div>
+                    <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-center">
+                        <div class="text-[10px] text-slate-400">Clicks/Scroll</div>
+                        <div id="metricClicks" class="text-base font-bold text-amber-400 mono mt-0.5">0</div>
+                    </div>
+                    <div class="p-2.5 rounded-xl bg-slate-950 border border-slate-800 text-center">
+                        <div class="text-[10px] text-slate-400">Scancodes</div>
+                        <div id="metricKeys" class="text-base font-bold text-cyan-400 mono mt-0.5">0</div>
+                    </div>
+                </div>
+
+                <!-- Live Hardware Queue Packet Stream -->
+                <div class="mt-3">
+                    <div class="flex items-center justify-between text-[11px] text-slate-400 mb-1.5">
+                        <span class="mono font-semibold">procSendInput.Call() Queue</span>
+                        <span class="mono text-[10px] text-slate-500">sizeof: 40B</span>
+                    </div>
+                    <div id="packetLogContainer" class="h-48 bg-slate-950 rounded-xl border border-slate-800 p-2.5 mono text-[10px] space-y-1.5 overflow-y-auto flex flex-col-reverse">
+                        <!-- Dynamically populated packets -->
+                    </div>
+                </div>
+            </div>
+
+            <!-- UIPI / Admin Tip -->
+            <div class="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200">
+                ⚡ <strong>UIPI Rule:</strong> Run your compiled <span class="mono">.exe</span> as Administrator so elevated trackers can read the <span class="mono">SendInput</span> stream.
+            </div>
+        </div>
+    </main>
+
+    <script>
+        // Simulation State
+        let isPlaying = true;
+        let isActivePhase = true;
+        let cycleSeconds = 45; // Out of 480s (5m active = 300s, 3m idle = 180s)
+        let osIdleSeconds = 0.0;
+        let nextActionTimer = 3;
+        let currentActionBusy = false;
+        let isDashboardView = false;
+
+        // Telemetry Counters
+        let moveCount = 0;
+        let clickScrollCount = 0;
+        let keyCount = 0;
+        let actionCounts = [7, 5, 6, 6];
+
+        const sampleSnippets = [
+            "// reviewing edge case parameters",
+            "console.log('Validating payload state...');",
+            "/* temporary state inspection */"
+        ];
+
+        // Cursor position in percentage relative to simulated screen
+        let cursorX = 62;
+        let cursorY = 52;
+        const safeBoxCenter = { x: 64, y: 54 };
+
+        // DOM Elements
+        const simCursor = document.getElementById('simCursor');
+        const cursorCoordTag = document.getElementById('cursorCoordTag');
+        const clickRippleRing = document.getElementById('clickRippleRing');
+        const packetLogContainer = document.getElementById('packetLogContainer');
+        const liveNarration = document.getElementById('liveNarration');
+        const stepCounterBadge = document.getElementById('stepCounterBadge');
+        const typedSnippetText = document.getElementById('typedSnippetText');
+        const editorContentArea = document.getElementById('editorContentArea');
+        const scrollStatusBadge = document.getElementById('scrollStatusBadge');
+        const altTabOverlay = document.getElementById('altTabOverlay');
+        const activeWindowBadge = document.getElementById('activeWindowBadge');
+        const trailCanvas = document.getElementById('mouseTrailCanvas');
+        const ctx = trailCanvas.getContext('2d');
+
+        function resizeCanvas() {
+            const rect = trailCanvas.parentElement.getBoundingClientRect();
+            trailCanvas.width = rect.width;
+            trailCanvas.height = rect.height;
+        }
+        window.addEventListener('resize', resizeCanvas);
+
+        // Helper: Log a Win32 SendInput struct packet
+        function pushPacket(type, flag, detail, colorClass = "text-emerald-400") {
+            osIdleSeconds = 0; // Reset OS idle timer on every hardware input!
+            updateOsIdleUI();
+            updateDashboardMetrics(type, flag, detail);
+
+            const row = document.createElement('div');
+            row.className = "border-b border-slate-900 pb-1 flex items-center justify-between gap-1";
+            row.innerHTML = `
+                <span class="${colorClass} font-semibold">${type}</span>
+                <span class="text-slate-300 truncate">${flag}</span>
+                <span class="text-slate-500">${detail}</span>
+            `;
+            packetLogContainer.prepend(row);
+            while (packetLogContainer.children.length > 18) {
+                packetLogContainer.removeChild(packetLogContainer.lastChild);
+            }
+        }
+
+        function highlightActionCard(index) {
+            for (let i = 0; i < 4; i++) {
+                const card = document.getElementById(`actionCard${i}`);
+                if (i === index) {
+                    card.className = "p-3 rounded-xl border-2 border-indigo-500 bg-indigo-950/30 shadow-lg transition-all duration-200 scale-[1.01]";
+                } else {
+                    card.className = "p-3 rounded-xl border border-slate-800 bg-slate-950/60 opacity-65 transition-all duration-200";
+                }
+            }
+        }
+
+        // Visual Click Ripple
+        function triggerClickVisual() {
+            clickScrollCount++;
+            document.getElementById('metricClicks').textContent = clickScrollCount;
+            clickRippleRing.classList.remove('hidden', 'click-ripple');
+            void clickRippleRing.offsetWidth; // Reflow
+            clickRippleRing.classList.add('click-ripple');
+            pushPacket("MOUSEINPUT", "LEFTDOWN | UP", "hold:58ms", "text-amber-400");
+        }
+
+        // Visual Scroll
+        function triggerScrollVisual(delta) {
+            clickScrollCount++;
+            document.getElementById('metricClicks').textContent = clickScrollCount;
+            const px = delta < 0 ? -10 : 0;
+            editorContentArea.style.transform = `translateY(${px}px)`;
+            scrollStatusBadge.textContent = `Wheel: ${delta}`;
+            pushPacket("MOUSEINPUT", "MOUSEEVENTF_WHEEL", `delta:${delta}`, "text-cyan-400");
+        }
+
+        // Smooth Relative Mouse Glide Animation
+        async function animateSmoothMouseGlide() {
+            resizeCanvas();
+            ctx.clearRect(0, 0, trailCanvas.width, trailCanvas.height);
+
+            const steps = Math.floor(Math.random() * 12) + 20; // 20-32 steps
+            const targetX = safeBoxCenter.x + (Math.random() * 14 - 7);
+            const targetY = safeBoxCenter.y + (Math.random() * 18 - 9);
+
+            const startX = cursorX;
+            const startY = cursorY;
+
+            ctx.beginPath();
+            ctx.strokeStyle = "rgba(16, 185, 129, 0.45)";
+            ctx.lineWidth = 2;
+
+            for (let i = 1; i <= steps; i++) {
+                const t = i / steps;
+                // Smooth ease-in-out curve
+                const ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+
+                const nextX = startX + (targetX - startX) * ease;
+                const nextY = startY + (targetY - startY) * ease;
+
+                const dx = Math.round((nextX - cursorX) * 4) || 1;
+                const dy = Math.round((nextY - cursorY) * 4) || -1;
+
+                cursorX = nextX;
+                cursorY = nextY;
+
+                simCursor.style.left = `${cursorX}%`;
+                simCursor.style.top = `${cursorY}%`;
+                cursorCoordTag.textContent = `dx:${dx > 0 ? '+'+dx : dx} dy:${dy > 0 ? '+'+dy : dy}`;
+                stepCounterBadge.textContent = `Step ${i}/${steps}`;
+
+                const pxX = (cursorX / 100) * trailCanvas.width;
+                const pxY = (cursorY / 100) * trailCanvas.height;
+                if (i === 1) ctx.moveTo(pxX, pxY);
+                else ctx.lineTo(pxX, pxY);
+                ctx.stroke();
+
+                moveCount++;
+                document.getElementById('metricMoves').textContent = moveCount;
+                if (i % 5 === 0 || i === steps) {
+                    pushPacket("MOUSEINPUT", "MOUSEEVENTF_MOVE", `dx:${dx} dy:${dy}`, "text-emerald-400");
+                }
+
+                await sleep(22);
+            }
+        }
+
+        // Execute one of the 4 cases from performRandomAction()
+        async function triggerSpecificAction(actionType) {
+            if (currentActionBusy) return;
+            if (!isActivePhase) {
+                setPhase(true);
+            }
+            currentActionBusy = true;
+            actionCounts[actionType]++;
+            highlightActionCard(actionType);
+
+            const actionTitles = [
+                "Mouse Glide + Focus Click + Scroll",
+                "Alt+Tab Secondary Window Review (15s)",
+                "Code Snippet Typing & Backspace Cleanup",
+                "Document Reading & Wheel Scroll"
+            ];
+            document.getElementById('dashCurrentTask').textContent = actionTitles[actionType];
+
+            if (actionType === 0) {
+                // CASE 0: Glide + Click + Scroll + F15
+                liveNarration.textContent = "Case 0: Gliding mouse via relative Win32 micro-steps...";
+                await animateSmoothMouseGlide();
+                await sleep(200);
+
+                liveNarration.textContent = "Case 0: Clicking left mouse button (40–90ms hold)...";
+                triggerClickVisual();
+                await sleep(350);
+
+                liveNarration.textContent = "Case 0: Scrolling wheel down (-120) and back up (+120)...";
+                triggerScrollVisual(-120);
+                await sleep(450);
+                triggerScrollVisual(120);
+
+                keyCount++;
+                document.getElementById('metricKeys').textContent = keyCount;
+                pushPacket("KEYBDINPUT", "VK_F15 (0x7E)", "scancode", "text-indigo-400");
+                liveNarration.textContent = "Case 0 Complete: Mouse distance, click, scroll & F15 recorded.";
+
+            } else if (actionType === 1) {
+                // CASE 1: Alt + Tab Window Switch
+                liveNarration.textContent = "Case 1: Sending VK_MENU (Alt) + VK_TAB scancodes...";
+                keyCount += 2;
+                document.getElementById('metricKeys').textContent = keyCount;
+                pushPacket("KEYBDINPUT", "VK_MENU + VK_TAB", "Alt+Tab", "text-indigo-400");
+
+                altTabOverlay.classList.remove('hidden');
+                altTabOverlay.classList.add('flex');
+                activeWindowBadge.textContent = "Window: Chrome Docs";
+
+                for (let rem = 6; rem >= 1; rem--) {
+                    document.getElementById('altTabTimer').textContent = `Simulating 15s hold (${rem}s)...`;
+                    if (rem === 3) {
+                        liveNarration.textContent = "Case 1: Gliding & scrolling inside secondary window...";
+                        await animateSmoothMouseGlide();
+                        triggerScrollVisual(-120);
+                    }
+                    await sleep(450);
+                }
+
+                pushPacket("KEYBDINPUT", "VK_MENU + VK_TAB", "Return", "text-indigo-400");
+                altTabOverlay.classList.add('hidden');
+                altTabOverlay.classList.remove('flex');
+                activeWindowBadge.textContent = "Window: VS Code";
+                liveNarration.textContent = "Case 1 Complete: Returned to primary VS Code window.";
+
+            } else if (actionType === 2) {
+                // CASE 2: Click + Right Arrow + Type Snippet + Pause + Backspace
+                const snippet = sampleSnippets[Math.floor(Math.random() * sampleSnippets.length)];
+                liveNarration.textContent = "Case 2: Clicking editor & tapping Right Arrow to protect selection...";
+                triggerClickVisual();
+                await sleep(220);
+
+                // Show Right-Arrow clearing selection highlight
+                const token = document.getElementById('existingCodeToken');
+                token.classList.add('bg-indigo-500/30');
+                await sleep(200);
+                token.classList.remove('bg-indigo-500/30');
+                keyCount++;
+                document.getElementById('metricKeys').textContent = keyCount;
+                pushPacket("KEYBDINPUT", "VK_RIGHT (0x27)", "clear sel", "text-amber-400");
+
+                liveNarration.textContent = `Case 2: Typing "${snippet}" with human cadence...`;
+                typedSnippetText.textContent = "";
+                for (let i = 0; i < snippet.length; i++) {
+                    typedSnippetText.textContent += snippet[i];
+                    keyCount++;
+                    document.getElementById('metricKeys').textContent = keyCount;
+                    if (i % 4 === 0) {
+                        pushPacket("KEYBDINPUT", `UNICODE '${snippet[i]}'`, "hold:32ms", "text-amber-300");
+                    }
+                    await sleep(45);
+                }
+
+                liveNarration.textContent = "Case 2: Reviewing typed snippet (5–12s pause)...";
+                await sleep(1100);
+
+                liveNarration.textContent = `Case 2: Cleaning up exact ${snippet.length} characters via VK_BACK...`;
+                for (let i = snippet.length; i >= 0; i--) {
+                    typedSnippetText.textContent = snippet.slice(0, i);
+                    keyCount++;
+                    document.getElementById('metricKeys').textContent = keyCount;
+                    if (i % 5 === 0) {
+                        pushPacket("KEYBDINPUT", "VK_BACK (0x08)", "cleanup", "text-rose-400");
+                    }
+                    await sleep(25);
+                }
+                liveNarration.textContent = "Case 2 Complete: Original code untouched; temporary snippet erased.";
+
+            } else if (actionType === 3) {
+                // CASE 3: Document Reading Simulation
+                liveNarration.textContent = "Case 3: Document reading — smooth mouse glide + 2-notch scroll...";
+                await animateSmoothMouseGlide();
+                triggerScrollVisual(-240);
+                await sleep(700);
+                triggerScrollVisual(240);
+                keyCount++;
+                document.getElementById('metricKeys').textContent = keyCount;
+                pushPacket("KEYBDINPUT", "VK_RIGHT (0x27)", "scancode", "text-cyan-400");
+                liveNarration.textContent = "Case 3 Complete: Simulated reading scroll up/down.";
+            }
+
+            nextActionTimer = Math.floor(Math.random() * 6) + 5;
+            currentActionBusy = false;
+        }
+
+        function setPhase(active) {
+            isActivePhase = active;
+            const badge = document.getElementById('phaseBadgeHeader');
+            const execText = document.getElementById('execFlagText');
+            const execIcon = document.getElementById('execStateIcon');
+            const idleResetTag = document.getElementById('idleResetTag');
+            const dashPhasePill = document.getElementById('dashPhasePill');
+
+            if (active) {
+                cycleSeconds = 30;
+                badge.className = "px-2.5 py-0.5 text-[11px] font-semibold rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 mono";
+                badge.textContent = "🟢 ACTIVE PHASE (5m)";
+                execText.textContent = "ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED";
+                execText.className = "mono text-[11px] text-emerald-400 mt-0.5";
+                execIcon.textContent = "LOCK BLOCKED";
+                execIcon.className = "px-2 py-1 rounded bg-emerald-500/10 text-emerald-300 text-[10px] font-bold mono";
+                idleResetTag.textContent = "ACTIVE ACCOUNTED";
+                idleResetTag.className = "text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold";
+                dashPhasePill.textContent = "ACTIVE (5m)";
+                dashPhasePill.className = "px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold mono";
+                liveNarration.textContent = "Entered 5-Minute Active Phase. Picking random human actions...";
+            } else {
+                cycleSeconds = 320; // Inside 300..480 idle window
+                badge.className = "px-2.5 py-0.5 text-[11px] font-semibold rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 mono";
+                badge.textContent = "🔴 IDLE PHASE (3m Break)";
+                execText.textContent = "ES_CONTINUOUS (Sleep Allowed)";
+                execText.className = "mono text-[11px] text-rose-400 mt-0.5";
+                execIcon.textContent = "3M BREAK";
+                execIcon.className = "px-2 py-1 rounded bg-rose-500/10 text-rose-300 text-[10px] font-bold mono";
+                idleResetTag.textContent = "NATURAL BREAK (<= 3m)";
+                idleResetTag.className = "text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-semibold";
+                dashPhasePill.textContent = "IDLE BREAK (3m)";
+                dashPhasePill.className = "px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold mono";
+                liveNarration.textContent = "Idle Phase (3 mins): No inputs sent so activity pattern looks organic.";
+                highlightActionCard(-1);
+            }
+        }
+
+        function updateOsIdleUI() {
+            document.getElementById('osIdleTimerText').textContent = `${osIdleSeconds.toFixed(1)}s`;
+            const pct = Math.min(100, (osIdleSeconds / 180) * 100);
+            const osBar = document.getElementById('osIdleBar');
+            osBar.style.width = `${Math.max(4, pct)}%`;
+        }
+
+        function toggleDashboardView() {
+            isDashboardView = !isDashboardView;
+            const archGrid = document.getElementById('architectureMainGrid');
+            const dashView = document.getElementById('productivityDashboardView');
+            const btnText = document.getElementById('viewToggleText');
+
+            if (isDashboardView) {
+                archGrid.classList.add('hidden');
+                dashView.classList.remove('hidden');
+                dashView.classList.add('flex');
+                btnText.textContent = "Back to Hardware Explainer";
+            } else {
+                dashView.classList.add('hidden');
+                dashView.classList.remove('flex');
+                archGrid.classList.remove('hidden');
+                btnText.textContent = "Open Productivity Dashboard";
+            }
+        }
+
+        function updateDashboardMetrics(type, flag, detail) {
+            const total = 1284 + moveCount + clickScrollCount + keyCount;
+            document.getElementById('dashTotalInputs').textContent = total.toLocaleString();
+            document.getElementById('dashMoves').textContent = moveCount;
+            document.getElementById('dashClicks').textContent = clickScrollCount;
+            document.getElementById('dashKeys').textContent = keyCount;
+
+            const sumActions = actionCounts.reduce((a, b) => a + b, 0) || 1;
+            for (let i = 0; i < 4; i++) {
+                const pct = Math.round((actionCounts[i] / sumActions) * 100);
+                document.getElementById(`distBar${i}`).style.width = `${pct}%`;
+                document.getElementById(`distBar${i}Text`).textContent = `${pct}%`;
+            }
+
+            const feed = document.getElementById('dashboardLogFeed');
+            if (feed) {
+                const item = document.createElement('div');
+                item.className = "flex items-center justify-between py-1.5 px-2.5 rounded bg-slate-900/90 border border-slate-800/80";
+                const now = new Date().toTimeString().split(' ')[0];
+                item.innerHTML = `
+                    <div class="flex items-center gap-2">
+                        <span class="text-slate-500">[${now}]</span>
+                        <span class="text-emerald-400 font-semibold">${type}</span>
+                        <span class="text-slate-200">${flag}</span>
+                    </div>
+                    <span class="text-slate-400">${detail}</span>
+                `;
+                feed.prepend(item);
+                while (feed.children.length > 10) {
+                    feed.removeChild(feed.lastChild);
+                }
+            }
+        }
+
+        // Controls Listeners
+        document.getElementById('btnPlayPause').addEventListener('click', () => {
+            isPlaying = !isPlaying;
+            document.getElementById('playIcon').textContent = isPlaying ? "⏸" : "▶";
+            document.getElementById('playText').textContent = isPlaying ? "Pause Auto-Loop" : "Resume Auto-Loop";
+        });
+
+        document.getElementById('btnTogglePhase').addEventListener('click', () => {
+            setPhase(!isActivePhase);
+        });
+
+        function sleep(ms) {
+            return new Promise(res => setTimeout(res, ms));
+        }
+
+        function formatMinSec(sec) {
+            const m = String(Math.floor(sec / 60)).padStart(2, '0');
+            const s = String(sec % 60).padStart(2, '0');
+            return `${m}:${s}`;
+        }
+
+        // Main 1-second simulation ticker
+        setInterval(() => {
+            if (!isPlaying) return;
+
+            cycleSeconds = (cycleSeconds + 2) % 480;
+            if (cycleSeconds < 300 && !isActivePhase) setPhase(true);
+            if (cycleSeconds >= 300 && isActivePhase) setPhase(false);
+
+            const pct = (cycleSeconds / 480) * 100;
+            document.getElementById('timelinePlayhead').style.left = `${pct}%`;
+            document.getElementById('cycleTimeLabel').textContent = `${formatMinSec(cycleSeconds)} / 08:00`;
+
+            osIdleSeconds += 0.4;
+            updateOsIdleUI();
+
+            if (isActivePhase && !currentActionBusy) {
+                nextActionTimer--;
+                if (nextActionTimer <= 0) {
+                    const randAction = Math.floor(Math.random() * 4);
+                    triggerSpecificAction(randAction);
+                }
+                const nextSecStr = `${Math.max(0, nextActionTimer)}s`;
+                document.getElementById('nextActionCountdown').textContent = nextSecStr;
+                document.getElementById('dashNextCountdown').textContent = nextSecStr;
+            } else if (!isActivePhase) {
+                document.getElementById('nextActionCountdown').textContent = "Idle Break";
+                document.getElementById('dashNextCountdown').textContent = "Idle Break";
+            }
+        }, 450);
+
+        // Start initial demo action on load
+        window.onload = () => {
+            resizeCanvas();
+            setTimeout(() => triggerSpecificAction(0), 400);
+        };
+    </script>
+</body>
+</html>
